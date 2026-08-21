@@ -79,6 +79,14 @@ export interface CreateModelRuntimeOptions {
 	signal?: AbortSignal;
 	/** Skip initial catalog and availability refresh. Static models remain available. */
 	refreshOnCreate?: boolean;
+	/**
+	 * Optional allowlist for providers available to this runtime.
+	 *
+	 * When provided, built-in, config-backed, and extension providers not in the
+	 * list are not loaded or registered. An empty list is a valid way to create a
+	 * runtime with no providers before adding explicitly allowed native providers.
+	 */
+	providerAllowlist?: readonly string[];
 }
 
 export interface ModelRuntimeAuthOverrides extends AuthOperationOptions {
@@ -126,6 +134,14 @@ function mergeHeaders(
 	return merged;
 }
 
+function normalizeProviderAllowlist(providerAllowlist: readonly string[] | undefined): ReadonlySet<string> | undefined {
+	return providerAllowlist === undefined ? undefined : new Set(providerAllowlist);
+}
+
+function isProviderAllowed(providerAllowlist: readonly string[] | undefined, providerId: string): boolean {
+	return providerAllowlist === undefined || providerAllowlist.includes(providerId);
+}
+
 /** Configured pi-ai Models collection used by coding-agent and SDK consumers. */
 export class ModelRuntime implements Models {
 	private readonly models: MutableModels;
@@ -137,6 +153,7 @@ export class ModelRuntime implements Models {
 	private readonly compositionErrors = new Map<string, string>();
 	private readonly modelsPath: string | undefined;
 	private readonly modelNetworkEnabled: boolean;
+	private readonly providerAllowlist: ReadonlySet<string> | undefined;
 	private config: ModelConfig;
 	private snapshot: ModelRuntimeSnapshot = {
 		all: [],
@@ -158,11 +175,13 @@ export class ModelRuntime implements Models {
 		modelsStore: ModelsStore,
 		providers: readonly Provider[],
 		modelNetworkEnabled: boolean,
+		providerAllowlist: ReadonlySet<string> | undefined,
 	) {
 		this.credentials = credentials;
 		this.config = config;
 		this.modelsPath = modelsPath;
 		this.modelNetworkEnabled = modelNetworkEnabled;
+		this.providerAllowlist = providerAllowlist;
 		this.defaultBuiltins = new Map(providers.map((provider) => [provider.id, provider]));
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
@@ -186,7 +205,9 @@ export class ModelRuntime implements Models {
 				provider.id === "radius"
 					? provider
 					: withRemoteCatalog(provider, options.catalogBaseUrl, builtinModelDataGeneratedAt),
-			);
+			)
+			.filter((provider) => isProviderAllowed(options.providerAllowlist, provider.id));
+		const providerAllowlist = normalizeProviderAllowlist(options.providerAllowlist);
 		const runtime = new ModelRuntime(
 			credentials,
 			config,
@@ -194,6 +215,7 @@ export class ModelRuntime implements Models {
 			modelsStore,
 			providers,
 			process.env.PI_OFFLINE === undefined,
+			providerAllowlist,
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
@@ -220,6 +242,7 @@ export class ModelRuntime implements Models {
 		this.builtins.clear();
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		for (const providerId of this.config.getProviderIds()) {
+			if (!this.isProviderAllowed(providerId)) continue;
 			const config = this.config.getProvider(providerId);
 			if (config?.oauth !== "radius" || !config.baseUrl) continue;
 			this.builtins.set(
@@ -234,15 +257,22 @@ export class ModelRuntime implements Models {
 	}
 
 	private providerIds(): Set<string> {
-		return new Set([
-			...this.builtins.keys(),
-			...this.nativeExtensionProviders.keys(),
-			...this.config.getProviderIds(),
-			...this.extensionProviders.keys(),
-		]);
+		return new Set(
+			[
+				...this.builtins.keys(),
+				...this.nativeExtensionProviders.keys(),
+				...this.config.getProviderIds(),
+				...this.extensionProviders.keys(),
+			].filter((providerId) => this.isProviderAllowed(providerId)),
+		);
 	}
 
 	private recomposeProvider(providerId: string): void {
+		if (!this.isProviderAllowed(providerId)) {
+			this.models.deleteProvider(providerId);
+			this.compositionErrors.delete(providerId);
+			return;
+		}
 		const base = this.nativeExtensionProviders.get(providerId) ?? this.builtins.get(providerId);
 		const extension = this.extensionProviders.get(providerId);
 		if (!base && !this.config.getProvider(providerId) && !extension) {
@@ -271,6 +301,16 @@ export class ModelRuntime implements Models {
 		this.compositionErrors.clear();
 		for (const providerId of this.providerIds()) this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
+	}
+
+	private isProviderAllowed(providerId: string): boolean {
+		return this.providerAllowlist === undefined || this.providerAllowlist.has(providerId);
+	}
+
+	private assertProviderAllowed(providerId: string): void {
+		if (!this.isProviderAllowed(providerId)) {
+			throw new Error(`Provider ${providerId} is not allowed by this runtime's providerAllowlist.`);
+		}
 	}
 
 	private updateModelSnapshot(): void {
@@ -732,6 +772,7 @@ export class ModelRuntime implements Models {
 
 	registerNativeProvider(provider: Provider): void {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
+		this.assertProviderAllowed(provider.id);
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
 		this.recomposeProvider(provider.id);
@@ -740,6 +781,7 @@ export class ModelRuntime implements Models {
 	}
 
 	registerProvider(providerId: string, config: ProviderConfigInput): void {
+		this.assertProviderAllowed(providerId);
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
 		validateExtensionProvider(providerId, this.builtins.get(providerId), this.config.getProvider(providerId), config);
