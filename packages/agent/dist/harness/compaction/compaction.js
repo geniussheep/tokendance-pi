@@ -50,12 +50,12 @@ function getMessageFromEntryForCompaction(entry) {
     }
     return getMessageFromEntry(entry);
 }
-export async function completeSimpleWithRetries(models, model, context, options, retry, callbacks) {
+export async function completeSimpleWithRetries(models, model, context, options, retry, callbacks, routingSessionId) {
     // Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
     const requestOptions = {
         ...options,
         cacheRetention: "none",
-        sessionId: uuidv7(),
+        sessionId: routingSessionId || uuidv7(),
     };
     return retryAssistantCall(() => models.completeSimple(model, context, requestOptions), retry, requestOptions.signal, callbacks);
 }
@@ -379,12 +379,12 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 /** Generate or update a conversation summary for compaction. */
-export async function generateSummary(currentMessages, models, model, reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks) {
-    const result = await generateSummaryWithUsage(currentMessages, models, model, reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks);
+export async function generateSummary(currentMessages, models, model, reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks, routingSessionId) {
+    const result = await generateSummaryWithUsage(currentMessages, models, model, reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks, routingSessionId);
     return result.ok ? ok(result.value.text) : err(result.error);
 }
 /** Generate or update a conversation summary and return its provider usage. */
-export async function generateSummaryWithUsage(currentMessages, models, model, reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks) {
+export async function generateSummaryWithUsage(currentMessages, models, model, reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks, routingSessionId) {
     const maxTokens = Math.min(Math.floor(0.8 * reserveTokens), model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY);
     let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
     if (customInstructions) {
@@ -407,7 +407,7 @@ export async function generateSummaryWithUsage(currentMessages, models, model, r
     const completionOptions = model.reasoning && thinkingLevel && thinkingLevel !== "off"
         ? { maxTokens, signal, reasoning: thinkingLevel }
         : { maxTokens, signal };
-    const response = await completeSimpleWithRetries(models, model, { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages }, completionOptions, retry, callbacks);
+    const response = await completeSimpleWithRetries(models, model, { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages }, completionOptions, retry, callbacks, routingSessionId);
     if (response.stopReason === "aborted") {
         return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
     }
@@ -501,7 +501,7 @@ Summarize the prefix to provide context for the retained suffix:
 Be concise. Focus on what's needed to understand the kept suffix.`;
 export { serializeConversation } from "./utils.js";
 /** Generate compaction summary data from prepared session history. */
-export async function compact(preparation, models, model, customInstructions, signal, thinkingLevel, retry, callbacks) {
+export async function compact(preparation, models, model, customInstructions, signal, thinkingLevel, retry, callbacks, routingSessionId) {
     const { messagesToSummarize, turnPrefixMessages, retainedTail, isSplitTurn, tokensBefore, previousSummary, fileOps, settings, } = preparation;
     let summary;
     let summaryUsage;
@@ -509,13 +509,13 @@ export async function compact(preparation, models, model, customInstructions, si
         let historyText = "No prior history.";
         let historyUsage;
         if (messagesToSummarize.length > 0) {
-            const historyResult = await generateSummaryWithUsage(messagesToSummarize, models, model, settings.reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks);
+            const historyResult = await generateSummaryWithUsage(messagesToSummarize, models, model, settings.reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks, routingSessionId);
             if (!historyResult.ok)
                 return err(historyResult.error);
             historyText = historyResult.value.text;
             historyUsage = historyResult.value.usage;
         }
-        const turnPrefixResult = await generateTurnPrefixSummary(turnPrefixMessages, models, model, settings.reserveTokens, signal, thinkingLevel, retry, callbacks);
+        const turnPrefixResult = await generateTurnPrefixSummary(turnPrefixMessages, models, model, settings.reserveTokens, signal, thinkingLevel, retry, callbacks, routingSessionId);
         if (!turnPrefixResult.ok)
             return err(turnPrefixResult.error);
         summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value.text}`;
@@ -524,7 +524,7 @@ export async function compact(preparation, models, model, customInstructions, si
             : turnPrefixResult.value.usage;
     }
     else {
-        const summaryResult = await generateSummaryWithUsage(messagesToSummarize, models, model, settings.reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks);
+        const summaryResult = await generateSummaryWithUsage(messagesToSummarize, models, model, settings.reserveTokens, signal, customInstructions, previousSummary, thinkingLevel, retry, callbacks, routingSessionId);
         if (!summaryResult.ok)
             return err(summaryResult.error);
         summary = summaryResult.value.text;
@@ -540,7 +540,7 @@ export async function compact(preparation, models, model, customInstructions, si
         details: { readFiles, modifiedFiles },
     });
 }
-async function generateTurnPrefixSummary(messages, models, model, reserveTokens, signal, thinkingLevel, retry, callbacks) {
+async function generateTurnPrefixSummary(messages, models, model, reserveTokens, signal, thinkingLevel, retry, callbacks, routingSessionId) {
     const maxTokens = Math.min(Math.floor(0.5 * reserveTokens), model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY);
     const llmMessages = convertToLlm(messages);
     const conversationText = serializeConversation(llmMessages);
@@ -555,7 +555,7 @@ async function generateTurnPrefixSummary(messages, models, model, reserveTokens,
     const completionOptions = model.reasoning && thinkingLevel && thinkingLevel !== "off"
         ? { maxTokens, signal, reasoning: thinkingLevel }
         : { maxTokens, signal };
-    const response = await completeSimpleWithRetries(models, model, { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages }, completionOptions, retry, callbacks);
+    const response = await completeSimpleWithRetries(models, model, { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages }, completionOptions, retry, callbacks, routingSessionId);
     if (response.stopReason === "aborted") {
         return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));
     }

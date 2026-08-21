@@ -23,7 +23,7 @@ export interface CompactResult<T = unknown> {
     /** Optional implementation-specific details stored with the compaction entry. */
     details?: T;
 }
-export declare function completeSimpleWithRetries(models: Models, model: Model<Api>, context: Context, options: SimpleStreamOptions, retry?: RetryPolicy, callbacks?: RetryCallbacks): Promise<AssistantMessage>;
+export declare function completeSimpleWithRetries(models: Models, model: Model<Api>, context: Context, options: SimpleStreamOptions, retry?: RetryPolicy, callbacks?: RetryCallbacks, routingSessionId?: string): Promise<AssistantMessage>;
 /** Compaction thresholds and retention settings. */
 export interface CompactionSettings {
     /** Enable automatic compaction decisions. */
@@ -71,9 +71,9 @@ export interface CutPointResult {
 export declare function findCutPoint(entries: Entry[], startIndex: number, endIndex: number, keepRecentTokens: number): CutPointResult;
 export declare const SUMMARIZATION_SYSTEM_PROMPT = "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.";
 /** Generate or update a conversation summary for compaction. */
-export declare function generateSummary(currentMessages: AgentMessage[], models: Models, model: Model<Api>, reserveTokens: number, signal?: AbortSignal, customInstructions?: string, previousSummary?: string, thinkingLevel?: ThinkingLevel, retry?: RetryPolicy, callbacks?: RetryCallbacks): Promise<Result<string, CompactionError>>;
+export declare function generateSummary(currentMessages: AgentMessage[], models: Models, model: Model<Api>, reserveTokens: number, signal?: AbortSignal, customInstructions?: string, previousSummary?: string, thinkingLevel?: ThinkingLevel, retry?: RetryPolicy, callbacks?: RetryCallbacks, routingSessionId?: string): Promise<Result<string, CompactionError>>;
 /** Generate or update a conversation summary and return its provider usage. */
-export declare function generateSummaryWithUsage(currentMessages: AgentMessage[], models: Models, model: Model<Api>, reserveTokens: number, signal?: AbortSignal, customInstructions?: string, previousSummary?: string, thinkingLevel?: ThinkingLevel, retry?: RetryPolicy, callbacks?: RetryCallbacks): Promise<Result<{
+export declare function generateSummaryWithUsage(currentMessages: AgentMessage[], models: Models, model: Model<Api>, reserveTokens: number, signal?: AbortSignal, customInstructions?: string, previousSummary?: string, thinkingLevel?: ThinkingLevel, retry?: RetryPolicy, callbacks?: RetryCallbacks, routingSessionId?: string): Promise<Result<{
     text: string;
     usage: Usage;
 }, CompactionError>>;
@@ -100,5 +100,5 @@ export interface CompactionPreparation {
 export declare function prepareCompaction(pathEntries: Entry[], settings: CompactionSettings): Result<CompactionPreparation | undefined, CompactionError>;
 export { serializeConversation } from "./utils.ts";
 /** Generate compaction summary data from prepared session history. */
-export declare function compact(preparation: CompactionPreparation, models: Models, model: Model<Api>, customInstructions?: string, signal?: AbortSignal, thinkingLevel?: ThinkingLevel, retry?: RetryPolicy, callbacks?: RetryCallbacks): Promise<Result<CompactResult, CompactionError>>;
+export declare function compact(preparation: CompactionPreparation, models: Models, model: Model<Api>, customInstructions?: string, signal?: AbortSignal, thinkingLevel?: ThinkingLevel, retry?: RetryPolicy, callbacks?: RetryCallbacks, routingSessionId?: string): Promise<Result<CompactResult, CompactionError>>;
 //# sourceMappingURL=compaction.d.ts.map

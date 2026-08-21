@@ -576,6 +576,50 @@ describe("harness compaction", () => {
 		expect(sessionIds[0]).not.toBe(sessionIds[1]);
 	});
 
+	it("reuses an explicit routing session ID across split compaction requests", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		const seenOptions: Array<Record<string, unknown> | undefined> = [];
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([
+			(_context, options) => {
+				seenOptions.push(options as Record<string, unknown> | undefined);
+				return fauxAssistantMessage("history summary");
+			},
+			(_context, options) => {
+				seenOptions.push(options as Record<string, unknown> | undefined);
+				return fauxAssistantMessage("turn prefix summary");
+			},
+		]);
+		const preparation: CompactionPreparation = {
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			retainedTail: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		getOrThrow(
+			await compact(
+				preparation,
+				models,
+				model,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				"compaction:session-1:operation-1",
+			),
+		);
+
+		expect(seenOptions.map((options) => options?.sessionId)).toEqual([
+			"compaction:session-1:operation-1",
+			"compaction:session-1:operation-1",
+		]);
+	});
+
 	it("returns compaction error results without throwing", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const preparation: CompactionPreparation = {

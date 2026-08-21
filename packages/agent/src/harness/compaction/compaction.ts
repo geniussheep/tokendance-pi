@@ -106,12 +106,13 @@ export async function completeSimpleWithRetries(
 	options: SimpleStreamOptions,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	routingSessionId?: string,
 ): Promise<AssistantMessage> {
 	// Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
 	const requestOptions: SimpleStreamOptions = {
 		...options,
 		cacheRetention: "none",
-		sessionId: uuidv7(),
+		sessionId: routingSessionId || uuidv7(),
 	};
 	return retryAssistantCall(
 		() => models.completeSimple(model, context, requestOptions),
@@ -509,6 +510,7 @@ export async function generateSummary(
 	thinkingLevel?: ThinkingLevel,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	routingSessionId?: string,
 ): Promise<Result<string, CompactionError>> {
 	const result = await generateSummaryWithUsage(
 		currentMessages,
@@ -521,6 +523,7 @@ export async function generateSummary(
 		thinkingLevel,
 		retry,
 		callbacks,
+		routingSessionId,
 	);
 	return result.ok ? ok(result.value.text) : err(result.error);
 }
@@ -537,6 +540,7 @@ export async function generateSummaryWithUsage(
 	thinkingLevel?: ThinkingLevel,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	routingSessionId?: string,
 ): Promise<Result<{ text: string; usage: Usage }, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -574,6 +578,7 @@ export async function generateSummaryWithUsage(
 		completionOptions,
 		retry,
 		callbacks,
+		routingSessionId,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
@@ -713,6 +718,7 @@ export async function compact(
 	thinkingLevel?: ThinkingLevel,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	routingSessionId?: string,
 ): Promise<Result<CompactResult, CompactionError>> {
 	const {
 		messagesToSummarize,
@@ -743,6 +749,7 @@ export async function compact(
 				thinkingLevel,
 				retry,
 				callbacks,
+				routingSessionId,
 			);
 			if (!historyResult.ok) return err(historyResult.error);
 			historyText = historyResult.value.text;
@@ -757,6 +764,7 @@ export async function compact(
 			thinkingLevel,
 			retry,
 			callbacks,
+			routingSessionId,
 		);
 		if (!turnPrefixResult.ok) return err(turnPrefixResult.error);
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value.text}`;
@@ -775,6 +783,7 @@ export async function compact(
 			thinkingLevel,
 			retry,
 			callbacks,
+			routingSessionId,
 		);
 		if (!summaryResult.ok) return err(summaryResult.error);
 		summary = summaryResult.value.text;
@@ -801,6 +810,7 @@ async function generateTurnPrefixSummary(
 	thinkingLevel?: ThinkingLevel,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	routingSessionId?: string,
 ): Promise<Result<{ text: string; usage: Usage }, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -828,6 +838,7 @@ async function generateTurnPrefixSummary(
 		completionOptions,
 		retry,
 		callbacks,
+		routingSessionId,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));
